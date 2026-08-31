@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Tools</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <span class="logo">My Tools</span>
+      <nav class="tabs" id="tab-nav"></nav>
+    </header>
+
+    <!-- ===== NOTES TAB ===== -->
+    <div id="tab-notes" class="tab-content hidden">
+      <div class="notes-input-area">
+        <textarea id="notes-input" placeholder="Viết ghi chú mới..." rows="4"></textarea>
+        <button id="btn-add-note" class="btn btn-primary btn-full">+ Thêm ghi chú</button>
+      </div>
+
+      <div class="notes-toolbar">
+        <input id="notes-search" type="text" placeholder="🔍 Tìm kiếm..." class="search-input" />
+        <span id="notes-count" class="notes-count"></span>
+      </div>
+
+      <div id="notes-list" class="notes-list"></div>
+      <div id="notes-empty" class="empty-state hidden">
+        <div class="empty-icon">📝</div>
+        <div>Chưa có ghi chú nào</div>
+      </div>
+    </div>
+
+    <!-- ===== JSON TAB ===== -->
+    <div id="tab-json" class="tab-content hidden">
+      <div id="json-editor" class="json-editor">
+        <pre id="json-find-marks" class="json-find-marks" aria-hidden="true"></pre>
+        <pre id="json-highlight" class="json-highlight" aria-hidden="true"></pre>
+        <textarea id="json-input" class="json-textarea" placeholder='Paste JSON vào đây…' spellcheck="false" wrap="off"></textarea>
+        <div id="json-find" class="json-find hidden">
+          <input id="json-find-input" type="text" placeholder="Tìm trong editor…" spellcheck="false" />
+          <span id="json-find-count" class="json-find-count">0/0</span>
+          <button id="json-find-prev"  class="json-find-btn" title="Trước (Shift+Enter)">↑</button>
+          <button id="json-find-next"  class="json-find-btn" title="Tiếp (Enter)">↓</button>
+          <button id="json-find-close" class="json-find-btn" title="Đóng (Esc)">✕</button>
+        </div>
+      </div>
+      <div id="json-status" class="status-bar"></div>
+      <div class="btn-row">
+        <button id="btn-json-format" class="btn btn-primary">Format</button>
+        <button id="btn-json-shrink" class="btn">Shrink</button>
+        <button id="btn-json-copy" class="btn">Copy</button>
+        <button id="btn-json-download" class="btn">Download</button>
+        <button id="btn-json-clear" class="btn btn-secondary">Xoá</button>
+      </div>
+
+    </div>
+
+    <!-- ===== TIMEKEEPING TAB ===== -->
+    <div id="tab-timekeeping" class="tab-content hidden">
+
+      <div class="tk-status-card">
+        <div class="tk-status-row">
+          <span class="tk-status-icon" id="tk-status-icon">⏳</span>
+          <div class="tk-status-info">
+            <div class="tk-status-title" id="tk-status-title">Đang kiểm tra…</div>
+            <div class="tk-status-sub" id="tk-status-sub"></div>
+          </div>
+          <button id="tk-refresh" class="btn btn-sm">↻</button>
+        </div>
+        <div id="tk-time-detail" class="tk-time-detail hidden">
+          <div class="tk-time-row">
+            <span class="tk-time-label">Giờ vào</span>
+            <span class="tk-time-value" id="tk-checkin-time">—</span>
+          </div>
+          <div class="tk-time-row">
+            <span class="tk-time-label">Đủ 8 tiếng lúc</span>
+            <span class="tk-time-value highlight" id="tk-checkout-time">—</span>
+          </div>
+          <div class="tk-time-row" id="tk-remaining-row">
+            <span class="tk-time-label">Còn lại</span>
+            <span class="tk-time-value" id="tk-remaining">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="reminder-card">
+        <div class="reminder-header">
+          <span class="reminder-icon">🔔</span>
+          <div class="reminder-info">
+            <div class="reminder-title">Nhắc chấm công vào</div>
+            <div class="reminder-sub">Mỗi 3 phút từ 08:00 → 09:30 · đặc biệt 08:44</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="tk-checkin-toggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="reminder-card">
+        <div class="reminder-header">
+          <span class="reminder-icon">👋</span>
+          <div class="reminder-info">
+            <div class="reminder-title">Thông báo khi checkin</div>
+            <div class="reminder-sub">Xác nhận đã vào + giờ checkout dự kiến</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="tk-checkin-msg-toggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="reminder-card">
+        <div class="reminder-header">
+          <span class="reminder-icon">🏃</span>
+          <div class="reminder-info">
+            <div class="reminder-title">Nhắc checkout</div>
+            <div class="reminder-sub">Thông báo khi đủ 8 tiếng làm việc</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="tk-checkout-toggle" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="tk-debug-row">
+        <span id="tk-alarm-status" class="tk-alarm-status">—</span>
+      </div>
+
+    </div>
+
+    <!-- ===== IMAGE CONVERT TAB ===== -->
+    <div id="tab-imgconv" class="tab-content hidden">
+
+      <div class="conv-dropzone" id="conv-dropzone">
+        <div class="conv-drop-icon">🖼</div>
+        <div class="conv-drop-text">Kéo thả ảnh vào đây</div>
+        <div class="hint-text">hoặc click để chọn file · PNG, JPG, GIF, BMP…</div>
+        <input type="file" id="conv-file-input" accept="image/*" multiple />
+      </div>
+
+      <div class="conv-settings">
+        <span class="interval-label">Chất lượng WebP</span>
+        <input type="range" id="conv-quality" min="1" max="100" value="80" class="quality-slider" />
+        <span id="conv-quality-val" class="quality-val">80%</span>
+      </div>
+
+      <div class="btn-row">
+        <button id="conv-dl-all" class="btn btn-primary btn-full hidden">⬇ Tải tất cả WebP</button>
+        <button id="conv-clear" class="btn hidden">Xoá</button>
+      </div>
+
+      <div id="conv-list" class="conv-list"></div>
+
+    </div>
+
+    <!-- ===== DOCS TAB ===== -->
+    <div id="tab-docs" class="tab-content hidden">
+
+      <div id="docs-dropzone" class="docs-dropzone">
+        <div class="docs-drop-icon">📄</div>
+        <div class="docs-drop-text">Kéo thả file vào đây</div>
+        <div class="hint-text">hoặc click để chọn · PDF, DOCX · Ctrl+V để dán</div>
+        <input type="file" id="docs-file-input"
+               accept=".pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+      </div>
+
+      <div id="docs-viewer" class="docs-viewer hidden">
+        <div class="docs-toolbar">
+          <span id="docs-filename" class="docs-filename"></span>
+          <div class="docs-toolbar-actions">
+            <button id="docs-zoom-out" class="btn btn-sm">−</button>
+            <span id="docs-zoom-val" class="docs-zoom-val">100%</span>
+            <button id="docs-zoom-in" class="btn btn-sm">+</button>
+            <button id="docs-dir-btn" class="btn btn-sm" title="Chọn thư mục lưu android_docs.md">📂 Thư mục</button>
+            <button id="docs-open-new" class="btn btn-sm">📁 File khác</button>
+          </div>
+        </div>
+        <div id="docs-status" class="status-bar"></div>
+        <div id="docs-content" class="docs-content"></div>
+      </div>
+
+      <!-- Thanh công cụ khi bôi đen text -->
+      <div id="docs-seltools" class="docs-pop hidden">
+        <button id="docs-sel-copy" class="btn btn-sm">📋 Copy</button>
+        <button id="docs-sel-note" class="btn btn-sm">💬 Chọn ghi chú</button>
+      </div>
+
+      <!-- Soạn ghi chú — block văn bản / ảnh xen kẽ, đổi vị trí bằng ↑ ↓ -->
+      <div id="docs-note-editor" class="docs-pop docs-note-card hidden">
+        <div class="docs-note-head" id="docs-note-editor-head">✎ Ghi chú<span class="docs-note-head-hint">giữ &amp; kéo</span></div>
+        <div id="docs-note-blocks" class="docs-note-blocks"></div>
+        <div id="docs-note-preview" class="md-body hidden"></div>
+        <div id="docs-note-addrow" class="docs-note-addrow">
+          <button id="docs-note-add-text" class="btn btn-sm">＋ Văn bản</button>
+          <label class="btn btn-sm" for="docs-note-img-input">＋ Ảnh</label>
+          <input type="file" id="docs-note-img-input" accept="image/*" multiple hidden />
+        </div>
+        <div class="docs-note-actions">
+          <button id="docs-note-preview-btn" class="btn btn-sm" title="Xem trước">👁</button>
+          <span class="docs-note-spacer"></span>
+          <button id="docs-note-cancel" class="btn btn-sm">Huỷ</button>
+          <button id="docs-note-save" class="btn btn-sm btn-primary">Lưu</button>
+        </div>
+      </div>
+
+      <!-- Xem ghi chú -->
+      <div id="docs-note-view" class="docs-pop docs-note-card hidden">
+        <div class="docs-note-head" id="docs-note-view-head">📝 Ghi chú<span class="docs-note-head-hint">giữ &amp; kéo</span></div>
+        <div id="docs-note-view-quote" class="docs-note-quote hidden"></div>
+        <div id="docs-note-view-text" class="md-body"></div>
+        <div id="docs-note-view-imgs" class="docs-note-imgs docs-note-imgs-col"></div>
+        <div class="docs-note-actions">
+          <button id="docs-note-copy" class="btn btn-sm">📋 Copy</button>
+          <button id="docs-note-edit" class="btn btn-sm">✏️ Sửa</button>
+          <button id="docs-note-del" class="btn btn-sm btn-danger">Xoá</button>
+          <button id="docs-note-close" class="btn btn-sm">Đóng</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ===== ANDROID DOCS TAB ===== -->
+    <div id="tab-androiddocs" class="tab-content hidden">
+      <div class="adoc-toolbar">
+        <span id="adoc-count" class="adoc-count">—</span>
+        <input id="adoc-search" type="text" class="search-input" placeholder="🔍 Tìm trong ghi chú / trích dẫn…" />
+        <button id="adoc-add" class="btn btn-sm btn-primary" title="Thêm ghi chú mới">+ Ghi chú</button>
+        <button id="adoc-restore" class="btn btn-sm" title="Khôi phục ghi chú từ thư mục android_docs">⤓</button>
+        <button id="adoc-refresh" class="btn btn-sm" title="Tải lại">↻</button>
+      </div>
+      <div id="adoc-attach-bar" class="adoc-attach-bar hidden"></div>
+      <div id="adoc-list" class="adoc-list"></div>
+      <div id="adoc-empty" class="empty-state hidden">
+        <div class="empty-icon">📓</div>
+        <div>Chưa có ghi chú nào hiển thị.</div>
+        <div class="hint-text">Nếu bạn vừa cài lại extension, dữ liệu vẫn nằm trong các file <code>.md</code>.<br />Bấm nút dưới → chọn lại thư mục <b>android_docs</b> để nạp lên.</div>
+        <button id="adoc-empty-restore" class="btn btn-primary" style="margin-top:10px">⤓ Chọn thư mục &amp; khôi phục</button>
+      </div>
+    </div>
+
+  <!-- Xem ảnh phóng to (dùng chung) -->
+  <div id="docs-img-lightbox" class="hidden"><img src="" alt="" /></div>
+
+  <script src="../lib/pdf.min.js"></script>
+  <script src="../lib/jszip.min.js"></script>
+  <script src="../lib/docx-preview.js"></script>
+  <script src="../lib/marked.min.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
