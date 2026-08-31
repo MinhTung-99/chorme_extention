@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Tools</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <span class="logo">My Tools</span>
+      <button id="btn-open-panel" title="Open side panel">⊞ Panel</button>
+    </header>
+
+    <!-- TikTok section: visible only on tiktok.com -->
+    <section id="tiktok-section" class="section hidden">
+      <div class="section-title">
+        <span class="dot tiktok"></span> TikTok
+      </div>
+      <div id="tiktok-info" class="info-box hidden">
+        <span id="tiktok-desc" class="desc-text"></span>
+      </div>
+      <div class="btn-group">
+        <button id="btn-capture" class="btn">📷 Chụp frame</button>
+        <button id="btn-thumbnail" class="btn">🖼 Thumbnail</button>
+      </div>
+      <div id="tiktok-status" class="status"></div>
+    </section>
+
+    <!-- Quick note -->
+    <section class="section">
+      <div class="section-title">
+        <span class="dot note"></span> Ghi chú nhanh
+      </div>
+      <textarea id="quick-note" placeholder="Nhập ghi chú..." rows="3"></textarea>
+      <div class="btn-row">
+        <button id="btn-save-note" class="btn primary">Lưu</button>
+        <span id="note-status" class="status"></span>
+      </div>
+    </section>
+
+    <div id="not-tiktok-hint" class="hint hidden">
+      Mở tiktok.com để dùng TikTok tools
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
