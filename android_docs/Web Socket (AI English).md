@@ -1,10 +1,10 @@
 <!--android-docs
-{"v":2,"id":"muw6arg0","docKey":"Ghi chú chung::0","doc":"Ghi chú chung","page":1,"ts":1791271923226,"quote":"Stream (AI English)","xr":0.9,"yr":0.05,"ord":0}
+{"v":2,"id":"muw6arg0","docKey":"Ghi chú chung::0","doc":"Ghi chú chung","page":1,"ts":1791284006117,"quote":"Web Socket (AI English)","xr":0.9,"yr":0.05,"ord":1}
 -->
 
-# Stream (AI English)
+# Web Socket (AI English)
 
-> Ghi chú chung · trang 1 · 14:32:03 6/10/2026
+> Ghi chú chung · trang 1 · 17:53:26 6/10/2026
 
 <!--body-->
 

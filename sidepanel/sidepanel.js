@@ -1265,6 +1265,11 @@ $('conv-clear').addEventListener('click', () => {
   let lastFileHandle = null;  // FileSystemFileHandle của file mở gần nhất (để tự mở lại)
   let dirBusy        = false; // đang GHI vào thư mục → chặn resync đọc bản dở dang
   let lastLocalWrite = 0;     // mốc lần cuối app tự ghi storage (chống resync đua)
+  let notesSeq       = 0;     // tăng mỗi khi docsNotes trong storage bị đổi (kể cả từ tab khác)
+  let resyncWriting  = false; // resync đang tự ghi storage → không tính là thay đổi cục bộ
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area === 'local' && ch.docsNotes && !resyncWriting) notesSeq++;
+  });
   let dirOutOfSync   = false; // storage vừa đổi nhưng CHƯA CHẮC đã ghi ra thư mục
                                // (vd. sửa note lúc thư mục chưa được cấp quyền ghi) →
                                // lần resync tiếp theo phải đẩy ra đĩa trước, không được đọc ngược
@@ -1566,6 +1571,7 @@ $('conv-clear').addEventListener('click', () => {
       return countNotes(cur);
     }
 
+    const startSeq = notesSeq;
     const fromMd = {};
     const seen = new Set();
     let enumerated = false;
@@ -1580,6 +1586,10 @@ $('conv-clear').addEventListener('click', () => {
       enumerated = true;               // duyệt hết thư mục, không lỗi
     } catch (_) { return null; }       // lỗi giữa chừng → không đụng vào storage
     if (!enumerated) return null;
+
+    // Trong lúc đọc thư mục (có thể lâu vì ảnh base64) người dùng vừa thêm/sửa note →
+    // bản đọc được đã CŨ, ghi đè sẽ làm mất note mới. Bỏ qua, lần sau sẽ đẩy ra đĩa trước.
+    if (notesSeq !== startSeq || dirOutOfSync) return null;
 
     restoredOnce = true;
     const { docsNotes: cur = {} } = await chrome.storage.local.get('docsNotes');
@@ -1606,7 +1616,10 @@ $('conv-clear').addEventListener('click', () => {
       (Array.isArray(a) ? a : []).map((n) =>
         `${n.id}|${n.ts || 0}|${n.ord ?? ''}|${(n.quote || '').length}|${(n.title || '').length}|${(n.text || '').length}|${(n.images || []).length}|${n.page}`)]));
     if (proj(cur) !== proj(fromMd)) {
-      await chrome.storage.local.set({ docsNotes: fromMd });
+      if (notesSeq !== startSeq) return null;
+      resyncWriting = true;
+      try { await chrome.storage.local.set({ docsNotes: fromMd }); }
+      finally { setTimeout(() => { resyncWriting = false; }, 0); }
       if (docKey) { await loadNotes(); drawMarkers(); }
     }
     return total;
@@ -2525,6 +2538,7 @@ function renderAdocView(body, r, menuOpen = null) {
     `<div class="adoc-content">${blocksToHtml(notesToBlocks(r))}</div>` +
     `<div class="adoc-meta">${new Date(r.ts || Date.now()).toLocaleString('vi-VN')} · trang ${r.page}</div>` +
     `<div class="adoc-actions">
+       <button class="btn btn-sm adoc-edit">✏️ Sửa</button>
        <button class="btn btn-sm btn-danger adoc-del">Xoá</button>
      </div>`;
 
@@ -2538,6 +2552,12 @@ function renderAdocView(body, r, menuOpen = null) {
   }
   decorateMenus(body);
 
+  body.querySelector('.adoc-edit').addEventListener('click', () => {
+    // Vào edit giống hệt lúc đang xem: giữ đúng trạng thái gấp/mở của từng menu
+    const menuOpen = [...body.querySelectorAll('.adoc-content .rte-menu-h')]
+      .map((h) => (h.dataset.open === '0' ? '0' : '1'));
+    renderAdocEdit(body, r, false, menuOpen);
+  });
   body.querySelector('.adoc-del').addEventListener('click', async () => {
     const label = (r.title || r.quote) ? `“${(r.title || r.quote).slice(0, 60)}”` : 'này';
     if (!window.confirm(`Bạn có chắc chắn xoá ghi chú ${label}?\nHành động này không thể hoàn tác.`)) return;
@@ -3343,6 +3363,7 @@ function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
           ensureTailAt(rte);
           sync();
         });
+        rte.addEventListener('dblclick', (e) => { if (e.target.tagName === 'IMG') openLightbox(e.target.src); });
         rte.addEventListener('blur', sync);
         rte.addEventListener('keydown', (e) => { guardTailBox(rte, e); guardTail(rte, e); });
         rte.addEventListener('focus', () => { activeRte = rte; activeBlk = blk; });
@@ -3392,24 +3413,146 @@ function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
   });
 
   // Chèn ảnh: nút "+ Ảnh" (chọn file) hoặc dán / kéo-thả vào khung sửa
-  async function addImages(files) {
-    let added = 0;
+  // Con trỏ đang nằm trong phần thân của 1 menu (.rte-menu-b) → trả về phần thân đó
+  const menuBodyOf = (rng) => {
+    if (!rng || !boxEl.contains(rng.commonAncestorContainer)) return null;
+    const n = rng.commonAncestorContainer;
+    const el = n.nodeType === 1 ? n : n.parentElement;
+    const mb = el && el.closest ? el.closest('.rte-menu-b') : null;
+    return mb && mb.closest('.adoc-rte') ? mb : null;
+  };
+  // Chèn ảnh: nếu con trỏ đang ở trong 1 menu → chèn ngay tại con trỏ, BÊN TRONG menu đó;
+  // ngược lại thêm thành khối ảnh riêng như trước. rng = vùng con trỏ lúc bấm / dán / thả.
+  async function addImages(files, rng = null) {
+    const range = rng || savedRange;
+    const target = range ? range.cloneRange() : null;
+    const inMenu = menuBodyOf(target);
+    const srcs = [];
     for (const f of files) {
-      try { blocks.push({ type: 'image', src: await shrinkImageToDataUrl(f) }); added++; } catch (_) {}
+      try { srcs.push(await shrinkImageToDataUrl(f)); } catch (_) {}
     }
-    if (added) draw();
+    if (!srcs.length) return;
+    if (inMenu && inMenu.isConnected) {
+      const rte = inMenu.closest('.adoc-rte');
+      const blk = blocks[+rte.dataset.bi];
+      rte.focus();
+      try { const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(target); } catch (_) {}
+      // class đứng TRƯỚC src để dòng <img> không bị parseNoteMd tách thành khối ảnh riêng
+      const html = srcs.map((src) => `<img class="rte-img" src="${src}">`).join('');
+      try { document.execCommand('insertHTML', false, html); } catch (_) {}
+      saveSel();
+      if (blk) blk.value = HTML_MARK + rteHTML(rte);
+      return;
+    }
+    for (const src of srcs) blocks.push({ type: 'image', src });
+    draw();
   }
   const imgInput = body.querySelector('.adoc-img-input');
   body.querySelector('.adoc-add-img').addEventListener('click', () => imgInput.click());
   imgInput.addEventListener('change', (e) => { addImages([...e.target.files]); e.target.value = ''; });
   boxEl.addEventListener('paste', (e) => {
     const imgs = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
-    if (imgs.length) { e.preventDefault(); addImages(imgs); }
+    if (imgs.length) {
+      e.preventDefault();
+      const sel = document.getSelection();
+      addImages(imgs, sel && sel.rangeCount ? sel.getRangeAt(0) : null);
+    }
   });
+  // ---- Kéo ảnh sẵn có: ảnh trong text/menu hoặc khối ảnh riêng → thả vào bất kỳ vị trí nào của ô text ----
+  let dragImg = null;   // { el } ảnh nằm trong text  |  { block: index } khối ảnh riêng
+  boxEl.addEventListener('dragstart', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'IMG') return;
+    hideImgX();
+    if (t.closest('.adoc-rte')) dragImg = { el: t };
+    else if (t.classList.contains('adoc-edit-img')) {
+      const rows = [...boxEl.querySelectorAll('.adoc-edit-row')];
+      dragImg = { block: rows.indexOf(t.closest('.adoc-edit-row')) };
+    } else return;
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', 'img'); } catch (_) {}
+  });
+  boxEl.addEventListener('dragend', () => { dragImg = null; });
+  const dropImgAt = (e) => {
+    const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+    const d = dragImg; dragImg = null;
+    const n = r && r.commonAncestorContainer;
+    const el = n && (n.nodeType === 1 ? n : n.parentElement);
+    const rte = el && el.closest ? el.closest('.adoc-rte') : null;
+    if (!rte || !d) return;
+    const sync = (x) => { const b = blocks[+x.dataset.bi]; if (b) b.value = HTML_MARK + rteHTML(x); };
+    if (d.el) {
+      if (d.el.contains(n)) return;                 // thả lên chính nó
+      const srcRte = d.el.closest('.adoc-rte');
+      r.insertNode(d.el);                          // chuyển node: ra ngoài / vào menu / sang ô khác
+      sync(rte); if (srcRte && srcRte !== rte) sync(srcRte);
+      ensureTailAt(rte); if (srcRte && srcRte !== rte) ensureTailAt(srcRte);
+    } else if (typeof d.block === 'number' && blocks[d.block]?.type === 'image') {
+      const im = document.createElement('img');
+      im.className = 'rte-img';
+      im.src = blocks[d.block].src;
+      r.insertNode(im);
+      sync(rte); ensureTailAt(rte);
+      // tất cả ô text đã được đồng bộ vào blocks → bỏ khối ảnh cũ rồi vẽ lại, giữ trạng thái gấp/mở menu
+      boxEl.querySelectorAll('.adoc-rte').forEach(sync);
+      menuOpen = grabMenuOpen();
+      blocks.splice(d.block, 1);
+      draw();
+    }
+  };
+
+  // ---- Nút ✕ nổi trên ảnh (khi rê chuột vào ảnh trong text / menu) ----
+  const imgX = document.createElement('button');
+  imgX.type = 'button';
+  imgX.className = 'rte-img-x hidden';
+  imgX.textContent = '✕';
+  imgX.title = 'Xoá ảnh';
+  document.body.appendChild(imgX);
+  let hoverImg = null;
+  function hideImgX() { hoverImg = null; imgX.classList.add('hidden'); }
+  boxEl.addEventListener('mouseover', (e) => {
+    const t = e.target;
+    if (!t || t.tagName !== 'IMG' || !t.closest('.adoc-rte')) return;
+    hoverImg = t;
+    const r = t.getBoundingClientRect();
+    imgX.style.left = Math.max(r.left + 4, r.right - 28) + 'px';
+    imgX.style.top  = (r.top + 4) + 'px';
+    imgX.classList.remove('hidden');
+  });
+  boxEl.addEventListener('mouseout', (e) => {
+    if (e.target === hoverImg && e.relatedTarget !== imgX) hideImgX();
+  });
+  imgX.addEventListener('mouseleave', (e) => { if (e.relatedTarget !== hoverImg) hideImgX(); });
+  imgX.addEventListener('mousedown', (e) => e.preventDefault());   // không làm mất con trỏ
+  imgX.addEventListener('click', () => {
+    const im = hoverImg; hideImgX();
+    if (!im) return;
+    const rte = im.closest('.adoc-rte');
+    im.remove();
+    if (rte) {
+      const b = blocks[+rte.dataset.bi];
+      if (b) b.value = HTML_MARK + rteHTML(rte);
+      ensureTailAt(rte);
+    }
+  });
+  const scrollHide = () => hideImgX();
+  window.addEventListener('scroll', scrollHide, true);
+  const prevCleanup = body.__cleanupRte;
+  body.__cleanupRte = () => {
+    prevCleanup && prevCleanup();
+    window.removeEventListener('scroll', scrollHide, true);
+    imgX.remove();
+  };
+
   boxEl.addEventListener('dragover', (e) => { e.preventDefault(); });
   boxEl.addEventListener('drop', (e) => {
+    if (dragImg) { e.preventDefault(); dropImgAt(e); return; }
     const imgs = [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/'));
-    if (imgs.length) { e.preventDefault(); addImages(imgs); }
+    if (imgs.length) {
+      e.preventDefault();
+      const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+      addImages(imgs, r);
+    }
   });
 
   const blkEmpty = (b) => {
