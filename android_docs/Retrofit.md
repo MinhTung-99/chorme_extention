@@ -1,5 +1,5 @@
 <!--android-docs
-{"v":2,"id":"mto60kf7","docKey":"Nguyễn Minh Tùng - Android - CV.pdf::133175","doc":"Nguyễn Minh Tùng - Android - CV.pdf","page":1,"ts":1788599614471,"quote":"Retrofit","xr":0.9,"yr":0.05,"ord":1}
+{"v":2,"id":"mto60kf7","docKey":"Nguyễn Minh Tùng - Android - CV.pdf::133175","doc":"Nguyễn Minh Tùng - Android - CV.pdf","page":1,"ts":1788599614471,"quote":"Retrofit","xr":0.9,"yr":0.05,"ord":2}
 -->
 
 # Retrofit

@@ -1,5 +1,5 @@
 <!--android-docs
-{"v":2,"id":"mtiakglh","docKey":"Nguyễn Minh Tùng - Android - CV.pdf::133175","doc":"Nguyễn Minh Tùng - Android - CV.pdf","page":1,"ts":1789286419006,"quote":"Kotlin","xr":0.36039323136613177,"yr":0.23242119847592657,"ord":4}
+{"v":2,"id":"mtiakglh","docKey":"Nguyễn Minh Tùng - Android - CV.pdf::133175","doc":"Nguyễn Minh Tùng - Android - CV.pdf","page":1,"ts":1789286419006,"quote":"Kotlin","xr":0.36039323136613177,"yr":0.23242119847592657,"ord":0}
 -->
 
 # Kotlin

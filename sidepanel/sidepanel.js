@@ -199,12 +199,118 @@ function reColorCode(scopeEl) {
   setCaretByOffset(codeEl, Math.min(caret, blockText(codeEl).length));
 }
 
+// Lightbox xem ảnh: zoom (lăn chuột / nút +−/ pinch / nhấp đúp), kéo để di chuyển, Esc đóng
+const lbState = { z: 1, x: 0, y: 0 };
+function lbApply() {
+  const lb = $('docs-img-lightbox');
+  const im = lb.querySelector('img');
+  im.style.transform = `translate(${lbState.x}px, ${lbState.y}px) scale(${lbState.z})`;
+  im.style.cursor = lbState.z > 1 ? 'grab' : 'zoom-in';
+  const v = lb.querySelector('.lb-zoom-val');
+  if (v) v.textContent = Math.round(lbState.z * 100) + '%';
+}
+function lbZoomTo(z, cx, cy) {
+  const lb = $('docs-img-lightbox');
+  const nz = Math.min(8, Math.max(1, z));
+  if (nz === lbState.z) return;
+  // giữ điểm dưới con trỏ đứng yên (tâm ảnh = tâm màn hình + offset)
+  const r = lb.getBoundingClientRect();
+  const px = (cx ?? r.left + r.width / 2) - (r.left + r.width / 2);
+  const py = (cy ?? r.top + r.height / 2) - (r.top + r.height / 2);
+  const k = nz / lbState.z;
+  lbState.x = px - (px - lbState.x) * k;
+  lbState.y = py - (py - lbState.y) * k;
+  lbState.z = nz;
+  if (nz === 1) { lbState.x = 0; lbState.y = 0; }
+  lbApply();
+}
 function openLightbox(src) {
   const lb = $('docs-img-lightbox');
+  lbState.z = 1; lbState.x = 0; lbState.y = 0;
   lb.querySelector('img').src = src;
   lb.classList.remove('hidden');
+  lbApply();
 }
-$('docs-img-lightbox').addEventListener('click', () => $('docs-img-lightbox').classList.add('hidden'));
+function closeLightbox() { $('docs-img-lightbox').classList.add('hidden'); }
+(function initLightbox() {
+  const lb = $('docs-img-lightbox');
+  const im = lb.querySelector('img');
+  const bar = document.createElement('div');
+  bar.className = 'lb-bar';
+  bar.innerHTML =
+    '<button class="lb-out" title="Thu nhỏ">−</button>' +
+    '<span class="lb-zoom-val">100%</span>' +
+    '<button class="lb-in" title="Phóng to">+</button>' +
+    '<button class="lb-reset" title="Về 100%">⟲</button>' +
+    '<button class="lb-close" title="Đóng (Esc)">✕</button>';
+  lb.appendChild(bar);
+  bar.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.classList.contains('lb-in')) lbZoomTo(lbState.z * 1.4);
+    else if (b.classList.contains('lb-out')) lbZoomTo(lbState.z / 1.4);
+    else if (b.classList.contains('lb-reset')) lbZoomTo(1);
+    else if (b.classList.contains('lb-close')) closeLightbox();
+  });
+  lb.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    // pinch trên trackpad (và Ctrl+lăn) → zoom; vuốt 2 ngón → cuộn/di chuyển ảnh khi đang phóng to
+    if (e.ctrlKey || e.metaKey) {
+      lbZoomTo(lbState.z * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+    } else if (lbState.z > 1) {
+      lbState.x -= e.deltaX;
+      lbState.y -= e.deltaY;
+      lbApply();
+    }
+  }, { passive: false });
+  im.draggable = false;
+  im.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    lbState.z > 1 ? lbZoomTo(1) : lbZoomTo(2.5, e.clientX, e.clientY);
+  });
+  // kéo để di chuyển khi đã phóng to
+  let drag = null, moved = false;
+  im.addEventListener('mousedown', (e) => {
+    if (lbState.z <= 1) return;
+    e.preventDefault();
+    drag = { sx: e.clientX, sy: e.clientY, ox: lbState.x, oy: lbState.y };
+    moved = false;
+    im.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    lbState.x = drag.ox + dx; lbState.y = drag.oy + dy;
+    lbApply();
+  });
+  window.addEventListener('mouseup', () => { if (drag) { drag = null; lbApply(); } });
+  // click ra nền → đóng (bỏ qua nếu vừa kéo); click lên ảnh không đóng
+  im.addEventListener('click', (e) => { e.stopPropagation(); });
+  lb.addEventListener('click', () => { if (moved) { moved = false; return; } closeLightbox(); });
+  // pinch trên trackpad cảm ứng / màn hình touch
+  let pinch = null;
+  lb.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      pinch = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), z: lbState.z };
+    }
+  }, { passive: true });
+  lb.addEventListener('touchmove', (e) => {
+    if (pinch && e.touches.length === 2) {
+      e.preventDefault();
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      lbZoomTo(pinch.z * d / pinch.d, (e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+    }
+  }, { passive: false });
+  lb.addEventListener('touchend', () => { pinch = null; });
+  document.addEventListener('keydown', (e) => {
+    if (lb.classList.contains('hidden')) return;
+    if (e.key === 'Escape') closeLightbox();
+    else if (e.key === '+' || e.key === '=') lbZoomTo(lbState.z * 1.4);
+    else if (e.key === '-') lbZoomTo(lbState.z / 1.4);
+    else if (e.key === '0') lbZoomTo(1);
+  });
+})();
 
 // Note = danh sách block text/ảnh xen kẽ. Tương thích ngược với note kiểu {text, images}.
 function notesToBlocks(n) {
@@ -1253,9 +1359,10 @@ $('conv-clear').addEventListener('click', () => {
       page: n.page, ts: n.ts || Date.now(),
       quote: n.quote || '', xr: n.xr ?? 0.9, yr: n.yr ?? 0.05,
     };
+    if (n.title) meta.title = n.title;
     if (typeof n.ord === 'number') meta.ord = n.ord;   // thứ tự kéo-thả
     let md = `<!--android-docs\n${JSON.stringify(meta)}\n-->\n\n`;
-    md += `# ${(n.quote ? String(n.quote) : '(không có trích dẫn)').replace(/\s*\n\s*/g, ' ')}\n\n`;
+    md += `# ${((n.title || n.quote) ? String(n.title || n.quote) : '(không có trích dẫn)').replace(/\s*\n\s*/g, ' ')}\n\n`;
     md += `> ${docName} · trang ${n.page} · ${t.toLocaleString('vi-VN')}\n\n`;
     md += `<!--body-->\n\n`;
     for (const b of notesToBlocks(n)) {
@@ -1297,6 +1404,7 @@ $('conv-clear').addEventListener('click', () => {
     const out = {
       id: String(meta.id), docKey: meta.docKey,
       page: meta.page || 1, quote: meta.quote || '',
+      title: meta.title || '',
       blocks,
       text: blocksToText(blocks),
       images: blocksToImages(blocks),
@@ -1311,7 +1419,7 @@ $('conv-clear').addEventListener('click', () => {
   // Ghi vào thư mục: android_docs.json (khôi phục) + mỗi note 1 file note-<id>.md
   // Tên file .md theo đoạn text đã bôi đen (quote)
   function noteSlug(n) {
-    let s = String(n.quote || '')
+    let s = String(n.title || n.quote || '')
       .replace(/[\/\\:*?"<>| -]/g, ' ')   // ky tu cam -> space, GIU chu & khoang trang
       .replace(/\s+/g, ' ')
       .replace(/^[.\s]+/, '')
@@ -1496,7 +1604,7 @@ $('conv-clear').addEventListener('click', () => {
     // Chỉ ghi đè khi NỘI DUNG thật sự khác (bỏ qua khác biệt thứ tự field JSON)
     const proj = (o) => JSON.stringify(Object.entries(o).map(([k, a]) => [k,
       (Array.isArray(a) ? a : []).map((n) =>
-        `${n.id}|${n.ts || 0}|${n.ord ?? ''}|${(n.quote || '').length}|${(n.text || '').length}|${(n.images || []).length}|${n.page}`)]));
+        `${n.id}|${n.ts || 0}|${n.ord ?? ''}|${(n.quote || '').length}|${(n.title || '').length}|${(n.text || '').length}|${(n.images || []).length}|${n.page}`)]));
     if (proj(cur) !== proj(fromMd)) {
       await chrome.storage.local.set({ docsNotes: fromMd });
       if (docKey) { await loadNotes(); drawMarkers(); }
@@ -2187,7 +2295,7 @@ async function renderAndroidDocs() {
   // (các mục đang mở, vị trí cuộn) khi rời rồi quay lại tab.
   const sig = JSON.stringify(Object.entries(docsNotes).map(([k, arr]) => [
     k, (Array.isArray(arr) ? arr : []).map((n) =>
-      `${n.id}|${n.ts || 0}|${n.ord ?? ''}|${(n.quote || '').length}|${(n.text || '').length}|${(n.images || []).length}|${n.page}`),
+      `${n.id}|${n.ts || 0}|${n.ord ?? ''}|${(n.quote || '').length}|${(n.title || '').length}|${(n.text || '').length}|${(n.images || []).length}|${n.page}`),
   ])) + '|q=' + ($('adoc-search').value || '');
   if (noPending && listEl.childElementCount > 0 && listEl.dataset.sig === sig) return;
   listEl.dataset.sig = sig;
@@ -2213,6 +2321,7 @@ async function renderAndroidDocs() {
   const q = ($('adoc-search').value || '').trim().toLowerCase();
   const filtered = q
     ? rows.filter((r) =>
+        (r.title || '').toLowerCase().includes(q) ||
         (r.quote || '').toLowerCase().includes(q) ||
         (r.text  || '').toLowerCase().includes(q) ||
         r.docName.toLowerCase().includes(q))
@@ -2249,8 +2358,7 @@ async function renderAndroidDocs() {
     const title = document.createElement('button');
     title.className = 'adoc-title';
     title.innerHTML =
-      `<span class="adoc-title-text">${escapeMd(r.quote || '(không có trích dẫn)')}</span>` +
-      `<span class="adoc-title-meta">tr.${r.page}${r.images && r.images.length ? ' · 🖼' + r.images.length : ''}</span>`;
+      `<span class="adoc-title-text">${escapeMd(r.title || r.quote || '(không có trích dẫn)')}</span>`;
 
     const body = document.createElement('div');
     body.className = 'adoc-body hidden';
@@ -2417,7 +2525,6 @@ function renderAdocView(body, r, menuOpen = null) {
     `<div class="adoc-content">${blocksToHtml(notesToBlocks(r))}</div>` +
     `<div class="adoc-meta">${new Date(r.ts || Date.now()).toLocaleString('vi-VN')} · trang ${r.page}</div>` +
     `<div class="adoc-actions">
-       <button class="btn btn-sm adoc-edit">✏️ Sửa</button>
        <button class="btn btn-sm btn-danger adoc-del">Xoá</button>
      </div>`;
 
@@ -2431,14 +2538,8 @@ function renderAdocView(body, r, menuOpen = null) {
   }
   decorateMenus(body);
 
-  body.querySelector('.adoc-edit').addEventListener('click', () => {
-    // Vào edit giống hệt lúc đang xem: giữ đúng trạng thái gấp/mở của từng menu
-    const menuOpen = [...body.querySelectorAll('.adoc-content .rte-menu-h')]
-      .map((h) => (h.dataset.open === '0' ? '0' : '1'));
-    renderAdocEdit(body, r, false, menuOpen);
-  });
   body.querySelector('.adoc-del').addEventListener('click', async () => {
-    const label = r.quote ? `“${r.quote.slice(0, 60)}”` : 'này';
+    const label = (r.title || r.quote) ? `“${(r.title || r.quote).slice(0, 60)}”` : 'này';
     if (!window.confirm(`Bạn có chắc chắn xoá ghi chú ${label}?\nHành động này không thể hoàn tác.`)) return;
     await deleteAndroidNote(r.docKey, r.id);
     renderAndroidDocs();
@@ -2450,7 +2551,8 @@ function renderAdocView(body, r, menuOpen = null) {
 function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
   const blocks = notesToBlocks(r).map((b) => ({ ...b }));
   body.innerHTML =
-    `<input type="text" class="adoc-edit-quote" placeholder="Trích dẫn / tiêu đề (tuỳ chọn)…">` +
+    `<input type="text" class="adoc-edit-title adoc-edit-quote" placeholder="Tên tiêu đề (hiện trên danh sách, tuỳ chọn)…">` +
+    `<input type="text" class="adoc-edit-quote" placeholder="Trích dẫn (đoạn text gốc, tuỳ chọn)…">` +
     `<div class="adoc-rte-toolbar"></div>` +
     `<div class="adoc-edit-box"></div>` +
     `<div class="adoc-actions">
@@ -2460,7 +2562,9 @@ function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
        <button class="btn btn-sm adoc-cancel">Huỷ</button>
      </div>` +
     `<input type="file" class="adoc-img-input" accept="image/*" multiple hidden>`;
-  const quoteEl = body.querySelector('.adoc-edit-quote');
+  const titleEl = body.querySelector('.adoc-edit-title');
+  const quoteEl = body.querySelector('.adoc-edit-quote:not(.adoc-edit-title)');
+  titleEl.value = r.title || '';
   quoteEl.value = r.quote || '';
   const boxEl   = body.querySelector('.adoc-edit-box');
   const toolbar = body.querySelector('.adoc-rte-toolbar');
@@ -2468,6 +2572,7 @@ function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
   // "Chữ ký" nội dung để phát hiện có sửa gì không (dùng cho xác nhận khi Huỷ).
   // Gồm cả link (href) để việc chèn / sửa / bỏ link cũng được coi là "đã sửa".
   const contentSig = () => JSON.stringify([
+    (titleEl.value || '').trim(),
     (quoteEl.value || '').trim(),
     blocks.map((b) => {
       if (b.type === 'image') return 'img:' + String(b.src).slice(0, 48);
@@ -3329,13 +3434,15 @@ function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
     if (isNew) return;               // note mới: để nút 💾 lo, tránh tạo note "ma" khi Huỷ
     syncActive();
     const quote = (quoteEl.value || '').trim();
+    const title = (titleEl.value || '').trim();
     const clean = buildCleanBlocks();
-    if (!clean.length && !quote) return;
-    await saveAndroidNote(r.docKey, r.id, clean, { ...r, quote });
+    if (!clean.length && !quote && !title) return;
+    await saveAndroidNote(r.docKey, r.id, clean, { ...r, quote, title });
     r.blocks = clean;
     r.text = blocksToText(clean);
     r.images = blocksToImages(clean);
     r.quote = quote;
+    r.title = title;
     startSig = contentSig();          // coi như đã lưu → Huỷ không cảnh báo lại phần này
   };
 
@@ -3363,14 +3470,15 @@ function renderAdocEdit(body, r, isNew = false, menuOpen = null) {
       if (b) b.value = HTML_MARK + rteHTML(rte);
     });
     const quote = (quoteEl.value || '').trim();
+    const title = (titleEl.value || '').trim();
     const clean = buildCleanBlocks();
-    if (!clean.length && !quote) {
+    if (!clean.length && !quote && !title) {
       const btn = e.currentTarget;
-      btn.textContent = 'Cần nội dung hoặc trích dẫn';
+      btn.textContent = 'Cần nội dung, tiêu đề hoặc trích dẫn';
       setTimeout(() => (btn.textContent = '💾 Lưu'), 1600);
       return;
     }
-    await saveAndroidNote(r.docKey, r.id, clean, { ...r, quote });
+    await saveAndroidNote(r.docKey, r.id, clean, { ...r, quote, title });
     adocPendingOpen = { docKey: r.docKey, id: String(r.id) };
     renderAndroidDocs();
   });
@@ -3394,6 +3502,7 @@ async function saveAndroidNote(docKey, id, blocks, meta) {
   } else if (meta && 'quote' in meta) {
     n.quote = meta.quote || '';
   }
+  if (meta && 'title' in meta) n.title = meta.title || '';
   n.blocks = blocks;
   n.text = blocksToText(blocks);
   n.images = blocksToImages(blocks);
@@ -3401,6 +3510,31 @@ async function saveAndroidNote(docKey, id, blocks, meta) {
   await chrome.storage.local.set({ docsNotes });
   if (typeof onDocsNotesChanged === 'function') await onDocsNotesChanged();
 }
+
+// Đổi nhanh tiêu đề (không đụng nội dung)
+async function renameAndroidNote(docKey, id, title) {
+  const { docsNotes = {} } = await chrome.storage.local.get('docsNotes');
+  const n = (docsNotes[docKey] || []).find((x) => String(x.id) === String(id));
+  if (!n) return;
+  n.title = title || '';
+  n.ts = Date.now();
+  await chrome.storage.local.set({ docsNotes });
+  if (typeof onDocsNotesChanged === 'function') await onDocsNotesChanged();
+}
+
+// Mở / thu gọn tất cả ghi chú
+$('adoc-toggle-all')?.addEventListener('click', (e) => {
+  const items = [...document.querySelectorAll('#adoc-list .adoc-item')];
+  const anyClosed = items.some((it) => !it.querySelector('.adoc-title.open'));
+  items.forEach((it) => {
+    const t = it.querySelector('.adoc-title');
+    if (!t) return;
+    const isOpen = t.classList.contains('open');
+    if (anyClosed !== isOpen) t.click();
+  });
+  e.currentTarget.textContent = anyClosed ? '⊟' : '⊞';
+  e.currentTarget.title = anyClosed ? 'Thu gọn tất cả' : 'Mở tất cả';
+});
 
 async function deleteAndroidNote(docKey, id) {
   const { docsNotes = {} } = await chrome.storage.local.get('docsNotes');
