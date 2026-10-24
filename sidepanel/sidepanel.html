@@ -21,11 +21,18 @@
         <pre id="json-highlight" class="json-highlight" aria-hidden="true"></pre>
         <textarea id="json-input" class="json-textarea" placeholder='Paste JSON vào đây…' spellcheck="false" wrap="off"></textarea>
         <div id="json-find" class="json-find hidden">
-          <input id="json-find-input" type="text" placeholder="Tìm trong editor…" spellcheck="false" />
-          <span id="json-find-count" class="json-find-count">0/0</span>
-          <button id="json-find-prev"  class="json-find-btn" title="Trước (Shift+Enter)">↑</button>
-          <button id="json-find-next"  class="json-find-btn" title="Tiếp (Enter)">↓</button>
-          <button id="json-find-close" class="json-find-btn" title="Đóng (Esc)">✕</button>
+          <div class="json-find-row">
+            <input id="json-find-input" type="text" placeholder="Tìm trong editor…" spellcheck="false" />
+            <span id="json-find-count" class="json-find-count">0/0</span>
+            <button id="json-find-prev"  class="json-find-btn" title="Trước (Shift+Enter)">↑</button>
+            <button id="json-find-next"  class="json-find-btn" title="Tiếp (Enter)">↓</button>
+            <button id="json-find-close" class="json-find-btn" title="Đóng (Esc)">✕</button>
+          </div>
+          <div class="json-find-row">
+            <input id="json-replace-input" type="text" placeholder="Thay bằng…" spellcheck="false" />
+            <button id="json-replace-one" class="json-find-btn json-find-txt" title="Thay kết quả hiện tại (Enter)">Thay</button>
+            <button id="json-replace-all" class="json-find-btn json-find-txt json-find-primary" title="Thay tất cả (Cmd/Ctrl+Enter)">Tất cả</button>
+          </div>
         </div>
       </div>
       <div id="json-status" class="status-bar"></div>

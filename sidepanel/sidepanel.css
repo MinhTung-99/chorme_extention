@@ -123,21 +123,35 @@ html.fullpage .json-editor {
 /* Các lớp phải trùng khít nhau về typography */
 .json-find-marks,
 .json-err-marks,
+.json-highlight {
+  /* lớp phủ: cao/rộng theo nội dung, được dịch bằng transform (JS) — không có scroll riêng */
+  position: absolute;
+  top: 0; left: 0;
+  width: max-content; min-width: 100%;
+  height: auto; min-height: 100%;
+  overflow: visible;
+  will-change: transform;
+}
+.json-find-marks,
+.json-err-marks,
 .json-highlight,
 .json-textarea {
-  position: absolute;
-  inset: 0;
   margin: 0;
   padding: 10px;
   border: 0;
-  width: 100%;
-  height: 100%;
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 12px;
   line-height: 1.5;
   white-space: pre;
-  overflow: auto;
   tab-size: 2;
+}
+.json-textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 /* Lớp đánh dấu kết quả tìm (nằm dưới cùng) */
@@ -204,7 +218,7 @@ html.fullpage .json-editor {
   right: 8px;
   z-index: 5;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 4px;
   padding: 5px 6px;
   background: #1e1e2e;
@@ -1591,3 +1605,9 @@ html.fullpage .docs-viewer { min-height: calc(100vh - 150px); }
 .rte-img-x.hidden { display: none; }
 .adoc-rte img, .adoc-edit-img { cursor: grab; }
 .adoc-rte img:active, .adoc-edit-img:active { cursor: grabbing; }
+
+.json-find-row { display: flex; align-items: center; gap: 4px; }
+.json-find-row input { flex: 1; min-width: 0; }
+.json-find-txt { font-size: 11px; white-space: nowrap; border: 1px solid #2d2d3d; }
+.json-find-primary { background: #991b1b; color: #fff; border-color: #991b1b; }
+.json-find-primary:hover { background: #dc2626; }

@@ -550,9 +550,11 @@ function highlightJson(src) {
   );
 }
 
+// Các lớp màu KHÔNG tự cuộn: chỉ dịch bằng transform theo scroll của textarea
+// → không bị kẹt/giật khi nội dung dài (scrollTop của lớp phủ bị clamp, thanh cuộn lệch kích thước).
 function syncJsonScroll() {
-  jsonHighlight.scrollTop  = jsonFindMarks.scrollTop  = jsonErrMarks.scrollTop  = jsonInput.scrollTop;
-  jsonHighlight.scrollLeft = jsonFindMarks.scrollLeft = jsonErrMarks.scrollLeft = jsonInput.scrollLeft;
+  const t = `translate(${-jsonInput.scrollLeft}px, ${-jsonInput.scrollTop}px)`;
+  jsonHighlight.style.transform = jsonFindMarks.style.transform = jsonErrMarks.style.transform = t;
 }
 
 // Vị trí lỗi đầu tiên theo message của JSON.parse (0-based line), -1 nếu không rõ
@@ -714,15 +716,23 @@ function renderJsonErrMarks() {
   jsonErrMarks.innerHTML = html + '\n';
 }
 
-function renderJsonHighlight() {
-  jsonHighlight.innerHTML = highlightJson(jsonInput.value) + '\n';
+// Phần nặng (quét lỗi + tìm kiếm) chạy trễ khi gõ, tránh giật khi JSON nhiều item
+let jsonHeavyT = null;
+function renderJsonHeavy() {
   if (!$('json-find').classList.contains('hidden')) runJsonFind(true);
   else jsonFindMarks.innerHTML = '';
   renderJsonErrMarks();
   syncJsonScroll();
 }
+function renderJsonHighlight(deferHeavy = false) {
+  jsonHighlight.innerHTML = highlightJson(jsonInput.value) + '\n';
+  clearTimeout(jsonHeavyT);
+  if (deferHeavy === true && jsonInput.value.length > 20000) jsonHeavyT = setTimeout(renderJsonHeavy, 250);
+  else renderJsonHeavy();
+  syncJsonScroll();
+}
 
-jsonInput.addEventListener('input', renderJsonHighlight);
+jsonInput.addEventListener('input', () => renderJsonHighlight(true));
 jsonInput.addEventListener('scroll', syncJsonScroll);
 renderJsonHighlight();
 
@@ -803,14 +813,66 @@ function stepJsonFind(dir) {
   scrollJsonMatchIntoView();
 }
 
-function openJsonFind() {
+// Thay toàn bộ nội dung. execCommand('insertText') (để Cmd+Z được) chỉ dùng cho nội dung nhỏ và
+// luôn kiểm tra lại kết quả; không đúng thì gán thẳng .value — không phụ thuộc vào execCommand.
+function jsonSetText(text) {
+  const st = jsonInput.scrollTop, sl = jsonInput.scrollLeft;
+  jsonInput.focus();
+  if (text.length <= 150000) {
+    jsonInput.setSelectionRange(0, jsonInput.value.length);
+    try { document.execCommand('insertText', false, text); } catch (_) {}
+  }
+  if (jsonInput.value !== text) jsonInput.value = text;
+  renderJsonHighlight();            // dựng lại ngay (không trì hoãn)
+  jsonInput.scrollTop = st; jsonInput.scrollLeft = sl;
+  syncJsonScroll();
+}
+
+function replaceJsonAll() {
+  const q = $('json-find-input').value;
+  if (!q) { $('json-find-input').focus(); return; }
+  const rep = $('json-replace-input').value;
+  const text = jsonInput.value;
+  const lc = text.toLowerCase(), ql = q.toLowerCase();
+  let out = '', i = 0, n = 0, pos = lc.indexOf(ql);
+  while (pos !== -1) {
+    out += text.slice(i, pos) + rep;
+    i = pos + q.length; n++;
+    pos = lc.indexOf(ql, i);
+  }
+  if (!n) { setJsonStatus('Không có kết quả để thay', true); return; }
+  out += text.slice(i);
+  jsonSetText(out);
+  runJsonFind();
+  setJsonStatus(`Đã thay ${n} kết quả`);
+}
+
+function replaceJsonOne() {
+  if (!jsonFindMatches.length) { runJsonFind(); return; }
+  const m = jsonFindMatches[jsonFindIdx];
+  const rep = $('json-replace-input').value;
+  const keep = jsonFindIdx;
+  jsonInput.focus();
+  jsonInput.setSelectionRange(m.start, m.end);
+  let ok = false;
+  try { ok = document.execCommand('insertText', false, rep); } catch (_) {}
+  if (!ok) {
+    jsonInput.value = jsonInput.value.slice(0, m.start) + rep + jsonInput.value.slice(m.end);
+    renderJsonHighlight();
+  }
+  jsonFindIdx = keep;
+  runJsonFind(true);
+  $('json-replace-input').focus();
+}
+
+function openJsonFind(focusReplace = false) {
   const bar = $('json-find');
   bar.classList.remove('hidden');
   const sel = jsonInput.value.substring(jsonInput.selectionStart, jsonInput.selectionEnd);
   if (sel && !sel.includes('\n')) $('json-find-input').value = sel;
-  $('json-find-input').focus();
-  $('json-find-input').select();
   runJsonFind();
+  if (focusReplace) { $('json-replace-input').focus(); $('json-replace-input').select(); }
+  else { $('json-find-input').focus(); $('json-find-input').select(); }
 }
 
 function closeJsonFind() {
@@ -825,6 +887,12 @@ $('json-find-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter')       { e.preventDefault(); stepJsonFind(e.shiftKey ? -1 : 1); }
   else if (e.key === 'Escape') { e.preventDefault(); closeJsonFind(); }
 });
+$('json-replace-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); (e.metaKey || e.ctrlKey) ? replaceJsonAll() : replaceJsonOne(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeJsonFind(); }
+});
+$('json-replace-one').addEventListener('click', replaceJsonOne);
+$('json-replace-all').addEventListener('click', replaceJsonAll);
 $('json-find-next').addEventListener('click',  () => stepJsonFind(1));
 $('json-find-prev').addEventListener('click',  () => stepJsonFind(-1));
 $('json-find-close').addEventListener('click', closeJsonFind);
@@ -834,6 +902,9 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F') && activeTabId === 'json') {
     e.preventDefault();
     openJsonFind();
+  } else if ((e.ctrlKey || e.metaKey) && (e.key === 'h' || e.key === 'H') && activeTabId === 'json') {
+    e.preventDefault();
+    openJsonFind(true);   // bôi đen rồi Cmd/Ctrl+H → điền sẵn ô tìm, nhảy tới ô "Thay bằng"
   } else if (e.key === 'Escape' && activeTabId === 'json' && !$('json-find').classList.contains('hidden')) {
     closeJsonFind();
   }
