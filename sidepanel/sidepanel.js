@@ -356,6 +356,8 @@ function shrinkImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
 }
 
 // Cầu nối giữa tab Docs và tab Android Docs
+// id các note vừa bị người dùng xoá trong phiên này → được phép xoá file .md tương ứng
+const docsDeletedIds = new Set();
 let onDocsNotesChanged   = null; // Docs gán → gọi khi Android Docs xoá note
 let docsRequestRestore   = null; // Docs gán → Android Docs gọi để chọn thư mục + khôi phục
 let docsAutoRestore      = null; // Docs gán → khôi phục ngầm khi list rỗng (đã có thư mục)
@@ -1339,8 +1341,15 @@ $('conv-clear').addEventListener('click', () => {
   let notesSeq       = 0;     // tăng mỗi khi docsNotes trong storage bị đổi (kể cả từ tab khác)
   let resyncWriting  = false; // resync đang tự ghi storage → không tính là thay đổi cục bộ
   chrome.storage.onChanged.addListener((ch, area) => {
-    if (area === 'local' && ch.docsNotes && !resyncWriting) notesSeq++;
+    if (area === 'local' && ch.docsNotes && !resyncWriting) { notesSeq++; setDirty(true); }
   });
+  // Cờ "storage có thay đổi chưa ghi ra thư mục" phải LƯU BỀN: nếu sửa note khi thư mục chưa được
+  // cấp quyền rồi đóng/mở lại app, cờ trong RAM mất → lần Cấp quyền sau sẽ đọc thư mục (bản cũ)
+  // đè lên storage và làm mất thay đổi vừa sửa.
+  const setDirty = (v) => {
+    dirOutOfSync = v;
+    try { chrome.storage.local.set({ docsDirty: !!v }); } catch (_) {}
+  };
   let dirOutOfSync   = false; // storage vừa đổi nhưng CHƯA CHẮC đã ghi ra thư mục
                                // (vd. sửa note lúc thư mục chưa được cấp quyền ghi) →
                                // lần resync tiếp theo phải đẩy ra đĩa trước, không được đọc ngược
@@ -1374,6 +1383,7 @@ $('conv-clear').addEventListener('click', () => {
     try {
       dirHandle = (await idbGet('androidDocsDir')) || null;
       if (dirHandle) {
+        dirOutOfSync = !!(await chrome.storage.local.get('docsDirty')).docsDirty;
         dirNeedsGrant = (await dirHandle.queryPermission({ mode: 'readwrite' })) !== 'granted';
         if (!dirNeedsGrant) await docsResyncFromFolder();   // thư mục là nguồn chính
       }
@@ -1407,7 +1417,7 @@ $('conv-clear').addEventListener('click', () => {
       dirHandle = h; dirNeedsGrant = false;
       await idbSet('androidDocsDir', h);
       updateDirBtn();
-      const n = await docsResyncFromFolder();     // nạp note có sẵn trong thư mục (thư mục thắng)
+      const n = await docsResyncFromFolder({ seedIfEmpty: true });   // nạp note có sẵn trong thư mục; thư mục trống thì giữ dữ liệu app
       if (n === 0) await doExportMarkdown();      // thư mục mới, trống → seed từ dữ liệu app
       flash($('docs-dir-btn'), '✓ đã lưu');
     } catch (_) { /* user huỷ hộp thoại */ }
@@ -1513,9 +1523,10 @@ $('conv-clear').addEventListener('click', () => {
     }
     dirNeedsGrant = false;
     dirBusy = true;
+    const seqAtStart = notesSeq;
     try {
       const ok = await syncFolderInner();
-      if (ok) dirOutOfSync = false;   // đã đẩy hết thay đổi cục bộ ra đĩa
+      if (ok && notesSeq === seqAtStart) setDirty(false);   // đã đẩy hết thay đổi cục bộ ra đĩa
       return ok;
     } finally {
       dirBusy = false;
@@ -1549,7 +1560,10 @@ $('conv-clear').addEventListener('click', () => {
         if (h.kind !== 'file' || !name.toLowerCase().endsWith('.md')) continue;
         if (wantFiles.has(name) || name === 'android_docs.md') continue;
         const txt = await (await h.getFile()).text().catch(() => '');
-        if (txt.includes('<!--android-docs')) await dirHandle.removeEntry(name);
+        // Chỉ xoá file note HỢP LỆ mà storage không còn, và chỉ khi chắc chắn đó là do người dùng xoá
+        // (đã đọc thư mục phiên này, hoặc chính note đó vừa bị xoá). File lỗi/không parse được → để yên.
+        const pn = txt.includes('<!--android-docs') ? parseNoteMd(txt) : null;
+        if (pn && (restoredOnce || docsDeletedIds.has(String(pn.id)))) await dirHandle.removeEntry(name);
       }
     } catch (_) {}
     return true;
@@ -1593,6 +1607,19 @@ $('conv-clear').addEventListener('click', () => {
 
       restoredOnce = true;
       if (!restore || countNotes(restore) === 0) return 0;
+      // Ép đọc lại khi storage đang có dữ liệu: KHÔNG ghi đè — gộp, bản mới hơn thắng, note chỉ có ở storage được giữ
+      if (countNotes(docsNotes) > 0) {
+        for (const [k, arr] of Object.entries(docsNotes)) {
+          if (!Array.isArray(arr)) continue;
+          const dst = restore[k] = Array.isArray(restore[k]) ? restore[k] : [];
+          for (const n of arr) {
+            const j = dst.findIndex((x) => String(x.id) === String(n.id));
+            if (j < 0) dst.push(n);
+            else if ((n.ts || 0) > (dst[j].ts || 0)) dst[j] = n;
+          }
+        }
+        setDirty(true);   // phần chỉ có ở storage cần được ghi ra thư mục
+      }
       for (const k of Object.keys(restore)) restore[k].sort((a, b) => (a.ord ?? 9e15) - (b.ord ?? 9e15) || (a.ts || 0) - (b.ts || 0));
       await chrome.storage.local.set({ docsNotes: restore });
       const c = countNotes(restore);
@@ -1620,7 +1647,7 @@ $('conv-clear').addEventListener('click', () => {
   //  - Mất quyền / lỗi đọc thư mục     → GIỮ NGUYÊN storage (không xoá nhầm)
   //  Trả về: số ghi chú đọc được từ thư mục (>=0), hoặc null nếu không đọc được
   //  (chưa có thư mục / mất quyền / lỗi) → khi null thì KHÔNG đụng vào storage.
-  docsResyncFromFolder = async () => {
+  docsResyncFromFolder = async (opts = {}) => {
     if (!dirHandle || dirNeedsGrant) return null;
     // Đang ghi ra thư mục / vừa ghi xong < 3s → storage là bản mới nhất, đừng đọc đè lại
     if (dirBusy || Date.now() - lastLocalWrite < 3000) return null;
@@ -1671,11 +1698,17 @@ $('conv-clear').addEventListener('click', () => {
       if (!Array.isArray(arr)) continue;
       for (const n of arr) {
         const inFolder = (fromMd[k] || []).some((x) => String(x.id) === String(n.id));
-        if (!inFolder && now - (n.ts || 0) < 15000) (fromMd[k] = fromMd[k] || []).push(n);
+        if (!inFolder && now - (n.ts || 0) < 15000) { (fromMd[k] = fromMd[k] || []).push(n); continue; }
+        // Note có ở cả hai nơi mà bản trong storage MỚI hơn file .md → giữ bản storage
+        const fi = (fromMd[k] || []).findIndex((x) => String(x.id) === String(n.id));
+        if (fi >= 0 && (n.ts || 0) > (fromMd[k][fi].ts || 0)) fromMd[k][fi] = n;
       }
     }
     for (const k of Object.keys(fromMd)) fromMd[k].sort((a, b) => (a.ord ?? 9e15) - (b.ord ?? 9e15) || (a.ts || 0) - (b.ts || 0));
     const total = Object.values(fromMd).reduce((s, a) => s + a.length, 0);
+
+    // Thư mục MỚI chọn mà trống (seedIfEmpty) → KHÔNG xoá dữ liệu của app; để caller seed từ storage
+    if (total === 0 && opts.seedIfEmpty && countNotes(cur) > 0) return 0;
 
     // Thư mục không còn file note → xoá luôn android_docs.json để phiên sau không hồi sinh
     if (total === 0) {
@@ -1688,6 +1721,10 @@ $('conv-clear').addEventListener('click', () => {
         `${n.id}|${n.ts || 0}|${n.ord ?? ''}|${(n.quote || '').length}|${(n.title || '').length}|${(n.text || '').length}|${(n.images || []).length}|${n.page}`)]));
     if (proj(cur) !== proj(fromMd)) {
       if (notesSeq !== startSeq) return null;
+      // Sắp ghi đè storage bằng bản từ thư mục: nếu làm mất note nào thì lưu bản sao trước (docsNotesBackup)
+      const lost = Object.entries(cur).some(([k, arr]) => Array.isArray(arr) && arr.some((n) =>
+        !(fromMd[k] || []).some((x) => String(x.id) === String(n.id))));
+      if (lost) { try { await chrome.storage.local.set({ docsNotesBackup: { at: Date.now(), notes: cur } }); } catch (_) {} }
       resyncWriting = true;
       try { await chrome.storage.local.set({ docsNotes: fromMd }); }
       finally { setTimeout(() => { resyncWriting = false; }, 0); }
@@ -1732,7 +1769,7 @@ $('conv-clear').addEventListener('click', () => {
   // docsResyncFromFolder có thể đọc lại bản .md cũ và ghi đè mất thay đổi.
   onDocsNotesChanged = async () => {
     lastLocalWrite = Date.now();   // chặn resync đè lên ngay khi vừa lưu
-    dirOutOfSync = true;           // storage vừa đổi, coi như chưa chắc đã ghi ra thư mục
+    setDirty(true);                // storage vừa đổi, coi như chưa chắc đã ghi ra thư mục
     if (docKey) { await loadNotes(); drawMarkers(); }
     clearTimeout(mdSaveT);
     await doExportMarkdown().catch(() => {});   // ghi thành công sẽ tự xoá cờ dirOutOfSync
@@ -2279,6 +2316,7 @@ $('conv-clear').addEventListener('click', () => {
   });
   $('docs-note-del').addEventListener('click', async () => {
     if (!viewingNote) return;
+    docsDeletedIds.add(String(viewingNote.id));
     docNotes = docNotes.filter((x) => x.id !== viewingNote.id);
     viewingNote = null;
     noteView.classList.add('hidden');
@@ -3754,6 +3792,7 @@ async function deleteAndroidNote(docKey, id) {
   const { docsNotes = {} } = await chrome.storage.local.get('docsNotes');
   if (Array.isArray(docsNotes[docKey])) {
     docsNotes[docKey] = docsNotes[docKey].filter((n) => n.id !== id);
+    docsDeletedIds.add(String(id));
     if (!docsNotes[docKey].length) delete docsNotes[docKey];
     else reindexOrd(docsNotes[docKey]);
     await chrome.storage.local.set({ docsNotes });
