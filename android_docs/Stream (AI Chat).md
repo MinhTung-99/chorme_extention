@@ -1,5 +1,5 @@
 <!--android-docs
-{"v":2,"id":"muwk9c2f","docKey":"Ghi chú chung::0","doc":"Ghi chú chung","page":1,"ts":1791347318488,"quote":"","xr":0.9,"yr":0.05,"title":"Stream (AI Chat)","ord":0}
+{"v":2,"id":"muwk9c2f","docKey":"Ghi chú chung::0","doc":"Ghi chú chung","page":1,"ts":1791347318488,"quote":"","xr":0.9,"yr":0.05,"title":"Stream (AI Chat)","ord":2}
 -->
 
 # Stream (AI Chat)

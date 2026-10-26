@@ -360,6 +360,7 @@ function shrinkImageToDataUrl(file, maxDim = 1600, quality = 0.82) {
 const docsDeletedIds = new Set();
 let onDocsNotesChanged   = null; // Docs gán → gọi khi Android Docs xoá note
 let docsRequestRestore   = null; // Docs gán → Android Docs gọi để chọn thư mục + khôi phục
+let docsDirState         = null; // Docs gán → 'pending' | 'none' | 'grant' | 'ok' (trạng thái thư mục đồng bộ)
 let docsAutoRestore      = null; // Docs gán → khôi phục ngầm khi list rỗng (đã có thư mục)
 let docsResyncFromFolder = null; // Docs gán → đọc lại note từ thư mục (thư mục là nguồn chính)
 let docsMaybeReopen      = null; // Docs gán → vào tab Docs mà chưa có tài liệu thì mở lại file gần nhất
@@ -436,9 +437,11 @@ async function showTab(id) {
       try { docsRedrawMarkers(); } catch (_) {}
     }
   } else if (id === 'androiddocs') {
+    try { await mergeBundledNotes(); } catch (_) {}
     if (typeof docsResyncFromFolder === 'function') {
       try { await docsResyncFromFolder(); } catch (_) {}
     }
+    if (typeof renderAdocGrantBar === 'function') renderAdocGrantBar();
     renderAndroidDocs();
   }
 }
@@ -1378,6 +1381,8 @@ $('conv-clear').addEventListener('click', () => {
     else { b.textContent = '📂 ✓'; b.className = 'btn btn-sm docs-dir-on'; b.title = `Đang tự lưu vào thư mục đã chọn (${dirHandle.name})`; }
   }
 
+  let dirInitDone = false;
+  docsDirState = () => (!dirInitDone ? 'pending' : !dirHandle ? 'none' : dirNeedsGrant ? 'grant' : 'ok');
   async function initDirHandle() {
     if (!window.showDirectoryPicker) return;
     try {
@@ -1388,7 +1393,9 @@ $('conv-clear').addEventListener('click', () => {
         if (!dirNeedsGrant) await docsResyncFromFolder();   // thư mục là nguồn chính
       }
     } catch (_) { dirHandle = null; }
+    dirInitDone = true;
     updateDirBtn();
+    if (typeof renderAdocGrantBar === 'function') renderAdocGrantBar();
   }
 
   async function pickOrGrantDir() {
@@ -1658,17 +1665,6 @@ $('conv-clear').addEventListener('click', () => {
       }
     } catch (_) { return null; }
 
-    // Storage có thay đổi CHƯA CHẮC đã ghi ra thư mục (vd. sửa note ở tab Android
-    // document lúc thư mục chưa được cấp quyền ghi) → phải đẩy thay đổi đó ra đĩa
-    // TRƯỚC. Nếu đọc ngược từ đĩa lúc này sẽ ăn phải bản .md cũ và xoá mất chỉnh
-    // sửa mới trong storage.
-    if (dirOutOfSync) {
-      const ok = await syncFolder().catch(() => false);
-      if (!ok) return null;   // vẫn chưa ghi được → đừng đụng vào storage
-      const { docsNotes: cur = {} } = await chrome.storage.local.get('docsNotes');
-      return countNotes(cur);
-    }
-
     const startSeq = notesSeq;
     const fromMd = {};
     const seen = new Set();
@@ -1687,23 +1683,39 @@ $('conv-clear').addEventListener('click', () => {
 
     // Trong lúc đọc thư mục (có thể lâu vì ảnh base64) người dùng vừa thêm/sửa note →
     // bản đọc được đã CŨ, ghi đè sẽ làm mất note mới. Bỏ qua, lần sau sẽ đẩy ra đĩa trước.
-    if (notesSeq !== startSeq || dirOutOfSync) return null;
+    if (notesSeq !== startSeq) return null;
 
     restoredOnce = true;
     const { docsNotes: cur = {} } = await chrome.storage.local.get('docsNotes');
 
-    // Giữ lại note trong storage mà thư mục CHƯA có (vừa lưu, thư mục chưa kịp phản ánh)
+    // GỘP storage với thư mục theo từng note (id): bản MỚI hơn (ts) thắng, nên dùng chung 1 thư mục
+    // giữa nhiều Chrome / profile không bị bản cũ ghi đè bản mới.
+    //  - Note chỉ có ở thư mục      → lấy về (trừ note vừa bị chính mình xoá)
+    //  - Note chỉ có ở storage      → giữ nếu storage đang có thay đổi chưa ghi ra thư mục / vừa lưu < 15s
+    //                                 (còn lại coi như đã bị xoá ở nơi khác → bỏ)
+    //  - Storage mới hơn thư mục    → giữ storage và ghi ra thư mục sau đó
     const now = Date.now();
-    for (const [k, arr] of Object.entries(cur)) {
-      if (!Array.isArray(arr)) continue;
-      for (const n of arr) {
-        const inFolder = (fromMd[k] || []).some((x) => String(x.id) === String(n.id));
-        if (!inFolder && now - (n.ts || 0) < 15000) { (fromMd[k] = fromMd[k] || []).push(n); continue; }
-        // Note có ở cả hai nơi mà bản trong storage MỚI hơn file .md → giữ bản storage
-        const fi = (fromMd[k] || []).findIndex((x) => String(x.id) === String(n.id));
-        if (fi >= 0 && (n.ts || 0) > (fromMd[k][fi].ts || 0)) fromMd[k][fi] = n;
+    const dirty = dirOutOfSync;
+    let needPush = false;
+    const merged = {};
+    for (const k of new Set([...Object.keys(cur), ...Object.keys(fromMd)])) {
+      const F = fromMd[k] || [];
+      const C = Array.isArray(cur[k]) ? cur[k] : [];
+      const out = [];
+      for (const f of F) {
+        if (docsDeletedIds.has(String(f.id))) { needPush = true; continue; }   // đã xoá ở đây → file sẽ bị dọn
+        const c = C.find((x) => String(x.id) === String(f.id));
+        if (c && (c.ts || 0) > (f.ts || 0)) { out.push(c); needPush = true; }
+        else out.push(f);
       }
+      for (const c of C) {
+        if (F.some((x) => String(x.id) === String(c.id))) continue;
+        if (dirty || now - (c.ts || 0) < 15000) { out.push(c); needPush = true; }
+      }
+      if (out.length) merged[k] = out;
     }
+    for (const k of Object.keys(fromMd)) delete fromMd[k];
+    Object.assign(fromMd, merged);
     for (const k of Object.keys(fromMd)) fromMd[k].sort((a, b) => (a.ord ?? 9e15) - (b.ord ?? 9e15) || (a.ts || 0) - (b.ts || 0));
     const total = Object.values(fromMd).reduce((s, a) => s + a.length, 0);
 
@@ -1730,6 +1742,8 @@ $('conv-clear').addEventListener('click', () => {
       finally { setTimeout(() => { resyncWriting = false; }, 0); }
       if (docKey) { await loadNotes(); drawMarkers(); }
     }
+    // Storage có phần mới hơn / chỉ có ở storage → đẩy ra thư mục (sau khi đã gộp, không mất bản nào)
+    if (needPush || dirty) await syncFolder().catch(() => {});
     return total;
   };
 
@@ -2317,6 +2331,7 @@ $('conv-clear').addEventListener('click', () => {
   $('docs-note-del').addEventListener('click', async () => {
     if (!viewingNote) return;
     docsDeletedIds.add(String(viewingNote.id));
+    addTombstone(viewingNote.id);
     docNotes = docNotes.filter((x) => x.id !== viewingNote.id);
     viewingNote = null;
     noteView.classList.add('hidden');
@@ -3788,11 +3803,58 @@ $('adoc-toggle-all')?.addEventListener('click', (e) => {
   e.currentTarget.title = anyClosed ? 'Thu gọn tất cả' : 'Mở tất cả';
 });
 
+// Dấu "đã xoá" bền: để ghi chú nằm sẵn trong gói extension (android_docs/android_docs.json trong git)
+// không bị nạp lại sau khi người dùng đã xoá nó ở máy này.
+async function addTombstone(id) {
+  try {
+    const { docsTombstones = {} } = await chrome.storage.local.get('docsTombstones');
+    docsTombstones[String(id)] = Date.now();
+    await chrome.storage.local.set({ docsTombstones });
+  } catch (_) {}
+}
+
+// Nạp ghi chú từ file android_docs/android_docs.json NẰM TRONG GÓI extension (khi checkout / git pull
+// rồi reload extension ở Chrome khác). Gộp theo id: bản mới hơn (ts) thắng; note chỉ có ở storage được giữ;
+// note đã bị xoá ở máy này (tombstone) không nạp lại. Trả về số ghi chú mới/được cập nhật.
+async function mergeBundledNotes() {
+  let bundled;
+  try {
+    const res = await fetch(chrome.runtime.getURL('android_docs/android_docs.json'), { cache: 'no-store' });
+    if (!res.ok) return 0;
+    bundled = await res.json();
+  } catch (_) { return 0; }
+  if (!bundled || typeof bundled !== 'object') return 0;
+
+  const { docsNotes = {}, docsTombstones = {} } = await chrome.storage.local.get(['docsNotes', 'docsTombstones']);
+  let changed = 0;
+  for (const [k, arr] of Object.entries(bundled)) {
+    if (!Array.isArray(arr)) continue;
+    const dst = docsNotes[k] = Array.isArray(docsNotes[k]) ? docsNotes[k] : [];
+    for (const b of arr) {
+      if (!b || b.id == null) continue;
+      const id = String(b.id);
+      if (docsDeletedIds.has(id)) continue;
+      if ((docsTombstones[id] || 0) >= (b.ts || 0)) continue;
+      const j = dst.findIndex((x) => String(x.id) === id);
+      if (j < 0) { dst.push({ ...b, id }); changed++; }
+      else if ((b.ts || 0) > (dst[j].ts || 0)) { dst[j] = { ...b, id }; changed++; }
+    }
+    if (!dst.length) delete docsNotes[k];
+    else if (dst.some((n) => typeof n.ord === 'number')) dst.sort((a, b) => (a.ord ?? 9e15) - (b.ord ?? 9e15) || (a.ts || 0) - (b.ts || 0));
+  }
+  if (changed) {
+    await chrome.storage.local.set({ docsNotes });
+    if (typeof onDocsNotesChanged === 'function') await onDocsNotesChanged();
+  }
+  return changed;
+}
+
 async function deleteAndroidNote(docKey, id) {
   const { docsNotes = {} } = await chrome.storage.local.get('docsNotes');
   if (Array.isArray(docsNotes[docKey])) {
     docsNotes[docKey] = docsNotes[docKey].filter((n) => n.id !== id);
     docsDeletedIds.add(String(id));
+    await addTombstone(id);
     if (!docsNotes[docKey].length) delete docsNotes[docKey];
     else reindexOrd(docsNotes[docKey]);
     await chrome.storage.local.set({ docsNotes });
@@ -3815,7 +3877,34 @@ async function adocRunRestore(btn) {
   setTimeout(() => (btn.textContent = label), 2500);
   renderAndroidDocs();
 }
+// Thanh cảnh báo: chưa chọn / chưa cấp quyền thư mục → ghi chú KHÔNG đồng bộ sang Chrome khác
+function renderAdocGrantBar() {
+  const bar = $('adoc-grant-bar');
+  if (!bar) return;
+  const st = typeof docsDirState === 'function' ? docsDirState() : 'pending';
+  const show = st === 'none' || st === 'grant';
+  bar.classList.toggle('hidden', !show);
+  if (show) {
+    bar.querySelector('.adoc-attach-txt').textContent = st === 'grant'
+      ? '⚠ Cần cấp lại quyền thư mục android_docs — chưa đọc / ghi được ghi chú từ Chrome khác.'
+      : '⚠ Chưa chọn thư mục android_docs — ghi chú chưa đồng bộ giữa các Chrome.';
+  }
+}
+async function adocGrantAndSync() {
+  const btn = $('adoc-grant-btn');
+  if (btn) btn.disabled = true;
+  try { if (typeof docsRequestRestore === 'function') await docsRequestRestore(); } catch (_) {}
+  if (btn) btn.disabled = false;
+  const el = $('adoc-list'); if (el) delete el.dataset.sig;
+  renderAdocGrantBar();
+  renderAndroidDocs();
+}
+$('adoc-grant-btn')?.addEventListener('click', adocGrantAndSync);
+
 $('adoc-refresh')?.addEventListener('click', async () => {
+  // Mất quyền thư mục → cần user-gesture để xin lại, nếu không ↻ không đọc được gì từ thư mục
+  if (typeof docsDirState === 'function' && docsDirState() === 'grant') { await adocGrantAndSync(); return; }
+  try { await mergeBundledNotes(); } catch (_) {}
   if (typeof docsResyncFromFolder === 'function') {
     try { await docsResyncFromFolder(); } catch (_) {}
   }
@@ -3889,3 +3978,23 @@ document.addEventListener('click', (e) => {
   head.dataset.open = head.dataset.open === '0' ? '1' : '0';
 });
 
+
+// Quay lại panel (đổi cửa sổ / tab trình duyệt) → đọc lại thư mục để lấy thay đổi từ Chrome / profile khác
+let focusSyncT = null;
+function syncOnReturn() {
+  if (document.visibilityState === 'hidden') return;
+  if (activeTabId !== 'docs' && activeTabId !== 'androiddocs') return;
+  if (typeof docsResyncFromFolder !== 'function') return;
+  clearTimeout(focusSyncT);
+  focusSyncT = setTimeout(async () => {
+    // đang soạn ghi chú dở thì không dựng lại danh sách
+    if (document.querySelector('#adoc-list .adoc-rte')) return;
+    try { await docsResyncFromFolder(); } catch (_) {}
+    if (activeTabId === 'androiddocs') renderAndroidDocs();
+  }, 300);
+}
+window.addEventListener('focus', syncOnReturn);
+document.addEventListener('visibilitychange', syncOnReturn);
+
+// Khởi động: nạp ghi chú có sẵn trong gói extension (git pull + reload extension ở Chrome khác)
+mergeBundledNotes().then(() => { if (activeTabId === 'androiddocs') renderAndroidDocs(); }).catch(() => {});

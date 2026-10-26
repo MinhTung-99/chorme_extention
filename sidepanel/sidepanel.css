@@ -1611,3 +1611,6 @@ html.fullpage .docs-viewer { min-height: calc(100vh - 150px); }
 .json-find-txt { font-size: 11px; white-space: nowrap; border: 1px solid #2d2d3d; }
 .json-find-primary { background: #991b1b; color: #fff; border-color: #991b1b; }
 .json-find-primary:hover { background: #dc2626; }
+
+.adoc-grant-bar { background: #2a1a10; border-color: #92400e; }
+.adoc-grant-bar .adoc-attach-txt { color: #fcd34d; }
